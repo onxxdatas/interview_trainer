@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +18,6 @@ from app.database.repositories import (
     get_or_create_schedule,
     list_concepts,
     list_questions_for_concept,
-    list_schedules_for_user,
     recent_question_ids_for_user,
 )
 
@@ -40,15 +40,24 @@ def _difficulty_band(mastery: float) -> tuple[int, int]:
     return (3, 5)
 
 
+def _ensure_utc(dt: datetime) -> datetime:
+    """Ensure a datetime object is timezone-aware and set to UTC."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 async def _score_candidates(session: AsyncSession, user: User) -> list[Candidate]:
     concepts = await list_concepts(session)
-    now = utcnow()
+    now = _ensure_utc(utcnow())
     candidates: list[Candidate] = []
 
     for concept in concepts:
         schedule = await get_or_create_schedule(session, user, concept, user.interval_minutes)
-        overdue_minutes = max(0.0, (now - schedule.next_review_at).total_seconds() / 60.0)
-        is_due = schedule.next_review_at <= now
+        
+        next_review_at = _ensure_utc(schedule.next_review_at)
+        overdue_minutes = max(0.0, (now - next_review_at).total_seconds() / 60.0)
+        is_due = next_review_at <= now
         never_asked = schedule.attempts == 0
 
         weakness_score = (1.0 - schedule.mastery) * 0.5
