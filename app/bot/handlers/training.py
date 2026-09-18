@@ -33,12 +33,25 @@ router = Router(name="training")
 async def _send_question(message: Message) -> None:
     settings = get_settings()
     async with get_session() as session:
-        user = await get_or_create_user(session, message.from_user.id, message.from_user.username, settings.default_interval_minutes)
-        question = await select_question(session, user)
-        if question is None:
-            await message.answer("No questions available yet — the question bank looks empty.")
-            return
-        attempt = await create_attempt(session, user, question)
+        user = await get_or_create_user(
+            session,
+            message.from_user.id,
+            message.from_user.username,
+            settings.default_interval_minutes,
+        )
+        
+        # Check if there is already a pending question for this user
+        pending = await get_pending_attempt(session, user.id)
+        if pending is not None:
+            question = await get_question(session, pending.question_id)
+            attempt = pending
+        else:
+            question = await select_question(session, user)
+            if question is None:
+                await message.answer("No questions available yet — the question bank looks empty.")
+                return
+            attempt = await create_attempt(session, user, question)
+
     text = format_question_message(question, attempt.id)
     await message.answer(text, reply_markup=main_menu_keyboard(), parse_mode="Markdown")
 
