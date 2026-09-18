@@ -21,16 +21,13 @@ logger = logging.getLogger(__name__)
 
 _JOB_PREFIX = "question_job_"
 
+from datetime import datetime, timezone, timedelta
+
 
 def _job_id(telegram_id: int) -> str:
     return f"{_JOB_PREFIX}{telegram_id}"
 
-from datetime import datetime, timezone, timedelta
-
 async def send_next_question(bot: Bot, telegram_id: int) -> None:
-    """Send (or re-send) the next question to a user. Also resolves any
-    still-pending question from the previous tick into OVERDUE if its deadline
-    has passed so the training loop never gets stuck on one unanswered question."""
     async with get_session() as session:
         from app.database.repositories import get_user_by_telegram_id
 
@@ -40,24 +37,21 @@ async def send_next_question(bot: Bot, telegram_id: int) -> None:
 
         pending = await get_pending_attempt(session, user.id)
         if pending is not None:
-            # Check if pending attempt has passed its deadline
-            deadline = pending.asked_at + timedelta(minutes=user.interval_minutes)
             now = datetime.now(timezone.utc)
-            
-            # If naive, make timezone-aware for comparison
-            if pending.asked_at.tzinfo is None:
-                now = datetime.utcnow()
+            asked_at = pending.asked_at
+            if asked_at.tzinfo is None:
+                asked_at = asked_at.replace(tzinfo=timezone.utc)
 
-            if now >= deadline:
-                pending.status = AttemptStatus.OVERDUE.value
-                await session.commit()
-                try:
-                    await bot.send_message(telegram_id, "⏱ Question overdue. Moving to the next question.")
-                except Exception:
-                    logger.exception("Failed to notify user %s about overdue question", telegram_id)
-            else:
-                # Still within interval/fresh; do not overwrite or replace yet
-                return
+            deadline = asked_at + timedelta(minutes=user.interval_minutes)
+            if now < deadline:
+                return  # Pending question is still fresh; skip creating a new one
+
+            pending.status = AttemptStatus.OVERDUE.value
+            await session.commit()
+            try:
+                await bot.send_message(telegram_id, "⏱ Question overdue. Moving to the next question.")
+            except Exception:
+                logger.exception("Failed to notify user %s about overdue question", telegram_id)
 
         question = await select_question(session, user)
         if question is None:
@@ -66,7 +60,7 @@ async def send_next_question(bot: Bot, telegram_id: int) -> None:
 
         attempt = await create_attempt(session, user, question)
 
-    text = format_question_message(question, attempt_number=attempt.id)
+    text = format_question_message(question, attempt.id)
     try:
         await bot.send_message(telegram_id, text, reply_markup=main_menu_keyboard(), parse_mode="Markdown")
     except Exception:

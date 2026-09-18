@@ -131,9 +131,12 @@ async def list_questions_for_concept(session: AsyncSession, concept_id: int) -> 
 
 
 async def get_question(session: AsyncSession, question_id: int) -> Question | None:
-    result = await session.execute(
-        select(Question).where(Question.id == question_id).options(selectinload(Question.concept))
+    stmt = (
+        select(Question)
+        .options(selectinload(Question.concept).selectinload(Concept.topic))
+        .where(Question.id == question_id)
     )
+    result = await session.execute(stmt)
     return result.scalar_one_or_none()
 
 
