@@ -145,37 +145,68 @@ async def cmd_settings(message: Message) -> None:
 
 @router.message(F.text & ~F.text.startswith("/"))
 async def handle_answer(message: Message) -> None:
-    """Any plain text message is treated as an answer to the pending question."""
+    """Handle plain text answers to the current pending question."""
     settings = get_settings()
     async with get_session() as session:
-        user = await get_or_create_user(session, message.from_user.id, message.from_user.username, settings.default_interval_minutes)
+        user = await get_or_create_user(
+            session,
+            message.from_user.id,
+            message.from_user.username,
+            settings.default_interval_minutes,
+        )
         attempt = await get_pending_attempt(session, user.id)
         if attempt is None:
             await message.answer("No question is currently waiting for an answer. Use /question to get one.")
             return
 
         question = await get_question(session, attempt.question_id)
-        await mark_answered(session, attempt, message.text)
 
-        client = get_gemini_client()
-        result = await evaluate_answer(client, question, message.text)
+        # 1. Attempt evaluation safely
+        try:
+            client = get_gemini_client()
+            result = await evaluate_answer(client, question, message.text)
+        except Exception:
+            logger.exception("Failed to evaluate answer for user %s", user.telegram_id)
+            await message.answer(
+                "⚠️ Couldn't reach the AI evaluator. Your question remains open — please submit your answer again in a moment."
+            )
+            return
+
+        # 2. Record answer and update SRS schedule
+        await mark_answered(session, attempt, message.text)
         await save_evaluation(session, attempt, result.model_dump())
 
         schedule = await get_or_create_schedule(session, user, question.concept, user.interval_minutes)
-        mistake = result.incorrect_claims[0] if result.incorrect_claims else (result.missing_concepts[0] if result.missing_concepts else None)
+        mistake = (
+            result.incorrect_claims[0]
+            if result.incorrect_claims
+            else (result.missing_concepts[0] if result.missing_concepts else None)
+        )
         apply_result(schedule, result.correctness, mistake)
         await session.commit()
 
-        follow_up_attempt = None
-        if result.follow_up_question:
-            follow_up_attempt = await create_attempt(session, user, question, is_follow_up=True)
+        # Check correctness status
+        is_correct = result.correctness.lower() == "correct"
 
+    # 3. Build feedback payload
     reply_lines = [f"*Score: {result.score}/10* ({result.correctness.replace('_', ' ')})", "", result.feedback]
-    if result.missing_concepts:
-        reply_lines += ["", "Missing:"] + [f"• {m}" for m in result.missing_concepts]
-    if result.incorrect_claims:
-        reply_lines += ["", "Incorrect:"] + [f"• {c}" for c in result.incorrect_claims]
+
+    if not is_correct:
+        if result.incorrect_claims:
+            reply_lines += ["", "*Why it was incorrect:*"] + [f"• {c}" for c in result.incorrect_claims]
+        if result.missing_concepts:
+            reply_lines += ["", "*Missing concepts:*"] + [f"• {m}" for m in result.missing_concepts]
+        
+        # Display the expected canonical solution/explanation
+        if hasattr(question, "explanation") and question.explanation:
+            reply_lines += ["", "*How the correct answer looks:*", question.explanation]
+
+    # 4. Send evaluation results
     await message.answer("\n".join(reply_lines), parse_mode="Markdown")
 
     if result.follow_up_question:
         await message.answer(f"*Follow-up:*\n{result.follow_up_question}", parse_mode="Markdown")
+
+    # 5. Automatically transition to the next question if correct
+    if is_correct:
+        await _send_question(message)
