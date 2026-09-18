@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: interview-trainer-bot
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -e ".[postgres]"
+    startCommand: python -m app.main
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ALLOWED_TELEGRAM_USER_ID
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      # Point this at a free external Postgres (Supabase/Neon) - the free
+      # Web Service plan has no persistent disk, so SQLite would reset on
+      # every restart. See DEPLOYMENT.md, Option C.
+      - key: DATABASE_URL
+        sync: false
+      - key: DEFAULT_INTERVAL_MINUTES
+        value: "15"
+      - key: LOG_LEVEL
+        value: INFO

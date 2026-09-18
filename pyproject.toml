@@ -1,0 +1,38 @@
+[project]
+name = "interview-trainer"
+version = "0.1.0"
+description = "Adaptive AI-powered Python/Backend interview training Telegram bot"
+requires-python = ">=3.11"
+dependencies = [
+    "aiogram>=3.13,<4.0",
+    "aiohttp>=3.9",
+    "SQLAlchemy>=2.0,<3.0",
+    "aiosqlite>=0.20",
+    "greenlet>=3.0",
+    "APScheduler>=3.10,<4.0",
+    "google-genai>=0.7",
+    "pydantic>=2.7,<3.0",
+    "pydantic-settings>=2.3,<3.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+postgres = [
+    "asyncpg>=0.29",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-mock>=3.14",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
